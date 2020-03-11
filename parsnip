@@ -1,0 +1,57 @@
+library(tidyverse)
+library(recipes)
+library(parsnip)
+library(caret)
+library(vip)
+
+insurance <- read.csv('insurance.csv')
+str(insurance)
+
+
+## Create a recipe
+
+rec <- recipe(charges ~ . , data = insurance) %>% 
+  step_dummy(all_nominal()) %>% 
+  step_log(charges)
+
+preparo <- prep(rec, insurance)
+insurance.new <- bake(preparo, insurance)
+
+## Create a model with parsnip
+
+model_glm <- linear_reg(mode = 'regression', penalty = 0.001212403, mixture = 0.1) %>% 
+  set_engine('glmnet') %>% 
+  fit(charges ~ . , data = insurance.new)  
+
+model_glm
+predito <- predict(model_glm,insurance_test)
+R2(predito, insurance_test$charges)
+
+## Fit with caret to chose parameters
+
+## Data partition
+set.seed(123)
+index <- createDataPartition(insurance.new$charges, p = 0.75, list = FALSE)
+insurance_train <- insurance.new[index, ]
+insurance_test <- insurance.new[-index, ]
+
+## -- Control
+
+controlObject <- trainControl(method = "cv",
+                              number = 10)
+
+
+
+## -- Elastic Net
+set.seed(123)
+insurance.lasso <- train(charges ~ . ,
+                         data = insurance_train,
+                         method = "glmnet",
+                         trControl = controlObject)
+
+insurance.lasso
+predito <- predict(insurance.lasso, insurance_test)
+R2(predito, insurance_test$charges)
+vip(insurance.lasso, mapping = aes(fill = 'red'))+
+  theme_classic()+
+  theme(legend.position = 'none')
