@@ -1,0 +1,97 @@
+library(tidyverse)
+library(JWileymisc)
+library(recipes)
+library(parsnip)
+library(dials)
+library(parsnip)
+library(dials)
+library(rsample)
+library(tune)
+library(caret)
+
+house <- read.csv('houses_to_rent.csv', stringsAsFactors = FALSE,
+                  na.strings = c('','-'))
+str(house)
+dim(house)
+
+house$X <- NULL
+house <- house %>% 
+  mutate(
+    city = factor(city),
+    animal = factor(animal),
+    furniture = factor(furniture),
+    hoa = parse_number(hoa),
+    rent.amount = parse_number(rent.amount),
+    property.tax = parse_number(property.tax),
+    fire.insurance = parse_number(fire.insurance),
+    total = parse_number(total)
+  )
+## Regularize continuos variables
+house <- house %>% 
+  mutate(
+    area = winsorizor(area, 0.01),
+    hoa = winsorizor(hoa, 0.01),
+    rent.amount = winsorizor(rent.amount, 0.01),
+    property.tax = winsorizor(property.tax, 0.01),
+    fire.insurance = winsorizor(fire.insurance, 0.01),
+    total = winsorizor(total, 0.01)
+  )
+
+##Drop total and fire.insurance tobecause they are high correlated
+##Aim to predict rent aumount
+house$total <- NULL
+house$fire.insurance <- NULL
+
+## --- Split Data ----------
+
+split <- initial_split(house, prop = 0.75)
+house.train <- training(split)
+house.test <- testing(split)
+
+
+
+## -- Recipe ---------------
+##
+rec <- recipe(rent.amount ~ . , data = house.train) %>% 
+  step_medianimpute(all_numeric()) %>% 
+  step_corr(all_numeric(), -all_predictors(), threshold = 0.9) %>% 
+  step_ns(area, deg_free = 4) %>% 
+  step_dummy(all_nominal()) %>% 
+  step_log(rent.amount) %>% 
+  step_zv(all_predictors())
+
+
+##-- Folds
+set.seed(123)
+folds <- vfold_cv(house.train, v = 10)
+
+## -- Model
+
+model_svm <- svm_rbf(mode = 'regression', cost = tune(), rbf_sigma = tune()) %>% 
+  set_engine('kernlab')
+
+
+## -- Grid Search with tune
+
+split_grid <- 
+  tune_grid(rec, model = model_svm, resamples = folds, grid = 7 )
+
+show_best(split_grid, metric = 'rmse', maximize = FALSE)
+
+autoplot(split_grid, metric = 'rmse')
+
+
+
+## -- Train a Best model
+preparo <- prep(rec, house.train)
+house.train.new <- bake(preparo, house.train)
+
+model_svmB <- svm_rbf(mode = 'regression') %>% 
+  set_engine('kernlab') %>% 
+  fit(rent.amount ~ . , data = house.train.new)
+
+## --- Test
+house.test.new <- bake(preparo, house.test)
+predicto <- predict(model_svmB, house.test.new)
+R2(predicto, house.test.new$rent.amount)
+
